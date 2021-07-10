@@ -91,7 +91,6 @@ function jump_to_vars_map(majumps)
     [[s for (s, c) in majumps.net_stoch[i]] for i in 1:get_num_majumps(majumps)]
 end
 
-
 # dependency graph is a map from a reaction to a vector of reactions
 # that should depend on species it changes
 function make_dependency_graph(numspec, ma_jumps::MassActionJump)
