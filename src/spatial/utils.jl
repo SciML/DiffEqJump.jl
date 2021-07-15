@@ -11,13 +11,8 @@ struct SpatialJump{J}
     dst::J    # destination location
 end
 
-############ abstract spatial system struct ##################
-"""
-Contains all info about the topology of the system
-"""
-abstract type AbstractSpatialSystem end
+############ spatial system interface ##################
 
-# Interface:
 # num_sites(spatial_system) = total number of sites
 # neighbors(spatial_system, site) = an iterator over the neighbors of site
 # num_neighbors(spatial_system, site) = number of neighbors of site
@@ -26,59 +21,122 @@ abstract type AbstractSpatialSystem end
 num_sites(graph::AbstractGraph) = LightGraphs.nv(graph)
 # neighbors(graph::AbstractGraph, site) = LightGraphs.neighbors(graph, site)
 num_neighbors(graph::AbstractGraph, site) = LightGraphs.outdegree(graph, site)
+rand_nbr(graph::AbstractGraph, site) = rand(neighbors(graph, site))
 
-################### CartesianGrid <: AbstractSpatialSystem ########################
+################### CartesianGrid ########################
+const offsets_1D = [CartesianIndex(-1),CartesianIndex(1)]
+const offsets_2D = [CartesianIndex(0,-1),CartesianIndex(-1,0),CartesianIndex(1,0),CartesianIndex(0,1)]
+const offsets_3D = [CartesianIndex(0,0,-1), CartesianIndex(0,-1,0),CartesianIndex(-1,0,0),CartesianIndex(1,0,0),CartesianIndex(0,1,0),CartesianIndex(0,0,1)]
 """
-Cartesian Grid of dimension D
+dimension is assumed to be 1, 2, or 3
 """
-struct CartesianGrid{D} <: AbstractSpatialSystem
-    linear_sizes::Vector{Int} #side lengths of the grid
-end
-
-function CartesianGrid(linear_sizes::Vector)
-    CartesianGrid{length(linear_sizes)}(linear_sizes)
-end
-
-function CartesianGrid(dimension, linear_size)
-    CartesianGrid{dimension}([linear_size for i in 1:dimension])
-end
-
-dimension(grid::CartesianGrid{D}) where D = D
-num_sites(grid::CartesianGrid) = prod(grid.linear_sizes)
-
-to_coordinates(grid::CartesianGrid{1}, site) = site
-to_coordinates(grid::CartesianGrid{2}, site) = (mod1(site, grid.linear_sizes[1]),fld1(site, grid.linear_sizes[1]))
-function to_coordinates(grid::CartesianGrid{3}, site)
-    temp = mod1(site,grid.linear_sizes[1]*grid.linear_sizes[2])
-    (mod1(temp, grid.linear_sizes[1]),fld1(temp, grid.linear_sizes[1]), fld1(site, grid.linear_sizes[1]*grid.linear_sizes[2]))
-end
-
-from_coordinates(grid::CartesianGrid{1}, x) = x
-from_coordinates(grid::CartesianGrid{2}, (x,y)) = (y-1) * grid.linear_sizes[1] + x
-from_coordinates(grid::CartesianGrid{3}, (x,y,z)) = (y-1) * grid.linear_sizes[1] + x + (z-1)*grid.linear_sizes[1]*grid.linear_sizes[2]
-
-issite(grid,site_id::Int) = site_id >= 1 && site_id <= num_sites(grid)
-function issite(grid,site_coordinates::Tuple)
-    length(site_coordinates) == dimension(grid) || return false
-    for (i,c) in enumerate(site_coordinates)
-        1 <= c && c <= grid.linear_sizes[i] || return false
+function potential_offsets(dimension::Int)
+    if dimension==1
+        return offsets_1D
+    elseif dimension==2
+        return offsets_2D
+    else # else dimension == 3
+        return offsets_3D
     end
-    return true
 end
 
-potential_neighbors(grid::CartesianGrid{1}, x) = [x-1,x+1]
-potential_neighbors(grid::CartesianGrid{2}, (x,y)) = [(x,y-1),(x-1,y),(x+1,y),(x,y+1)]
-potential_neighbors(grid::CartesianGrid{3}, (x,y,z)) = [(x,y,z-1),(x,y-1,z),(x-1,y,z),(x+1,y,z),(x,y+1,z),(x,y,z+1)]
+num_sites(grid) = prod(grid.dims)
+num_neighbors(grid, site) = grid.nums_neighbors[site]
 
-"""
-return neighbors of site in CartesianGrid
-"""
-function neighbors(grid::CartesianGrid, site::Int)
-    [from_coordinates(grid, nb) for nb in potential_neighbors(grid,to_coordinates(grid,site)) if issite(grid, nb)]
+
+# possible rand_nbr functions:
+# 1. Rejection-based: pick a neighbor, check it's valid; if not, repeat
+# 2. Iterator-based: draw a random number from 1 to num_neighbors and iterate to that neighbor
+# 3. Array-based: using a pre-allocated array in grid
+
+# rejection-based
+struct CartesianGrid1{N,T}
+    dims::NTuple{N, Int} #side lengths of the grid
+    nums_neighbors::Vector{Int}
+    CI::CartesianIndices{N, T}
+    LI::LinearIndices{N, T}
+    offsets::Vector{CartesianIndex{N}}
+end
+function CartesianGrid1(dims::Tuple)
+    dim = length(dims)
+    CI = CartesianIndices(dims)
+    LI = LinearIndices(dims)
+    offsets = potential_offsets(dim)
+    nums_neighbors = [count(x -> x+CI[site] in CI, offsets) for site in 1:prod(dims)]
+    CartesianGrid1(dims, nums_neighbors, CI, LI, offsets)
+end
+CartesianGrid1(dims) = CartesianGrid1(Tuple(dims))
+CartesianGrid1(dimension, linear_size::Int) = CartesianGrid1([linear_size for i in 1:dimension])
+function rand_nbr(grid::CartesianGrid1, site::Int)
+    CI = grid.CI; offsets = grid.offsets
+    I = CI[site]
+    while true
+        nb = rand(offsets) + I
+        nb in CI && return grid.LI[nb]
+    end
 end
 
-num_neighbors(grid::CartesianGrid, site) = length(neighbors(grid, site))
+# custom iterator-based
+struct CartesianGrid2{N,T}
+    dims::NTuple{N, Int} #side lengths of the grid
+    nums_neighbors::Vector{Int}
+    CI::CartesianIndices{N, T}
+    LI::LinearIndices{N, T}
+    offsets::Vector{CartesianIndex{N}}
+end
+function CartesianGrid2(dims::Tuple)
+    dim = length(dims)
+    CI = CartesianIndices(dims)
+    LI = LinearIndices(dims)
+    offsets = potential_offsets(dim)
+    nums_neighbors = [count(x -> x+CI[site] in CI, offsets) for site in 1:prod(dims)]
+    CartesianGrid2(dims, nums_neighbors, CI, LI, offsets)
+end
+CartesianGrid2(dims) = CartesianGrid2(Tuple(dims))
+CartesianGrid2(dimension, linear_size::Int) = CartesianGrid2([linear_size for i in 1:dimension])
+function rand_nbr(grid::CartesianGrid2, site::Int)
+    r = rand(1:num_neighbors(grid,site))
+    CI = grid.CI; offsets = grid.offsets
+    I = CI[site]
+    for off in offsets
+        nb = I + off
+        if nb in CI
+            r -= 1
+            r == 0 && return grid.LI[nb]
+        end
+    end
+end
 
+# array-based
+struct CartesianGrid3{N,T}
+    dims::NTuple{N, Int} #side lengths of the grid
+    nums_neighbors::Vector{Int}
+    CI::CartesianIndices{N, T}
+    LI::LinearIndices{N, T}
+    offsets::Vector{CartesianIndex{N}}
+    nbs::Vector{CartesianIndex{N}}
+end
+function CartesianGrid3(dims::Tuple)
+    dim = length(dims)
+    CI = CartesianIndices(dims)
+    LI = LinearIndices(dims)
+    offsets = potential_offsets(dim)
+    nums_neighbors = [count(x -> x+CI[site] in CI, offsets) for site in 1:prod(dims)]
+    nbs = zeros(CartesianIndex{3}, 2*dim)
+    CartesianGrid3(dims, nums_neighbors, CI, LI, offsets, nbs)
+end
+CartesianGrid3(dims) = CartesianGrid3(Tuple(dims))
+CartesianGrid3(dimension, linear_size::Int) = CartesianGrid3([linear_size for i in 1:dimension])
+function rand_nbr(grid::CartesianGrid3, site::Int)
+    CI = grid.CI; offsets = grid.offsets; nbs = grid.nbs
+    I = CI[site]
+    j = 0
+    for off in offsets
+        nb = I + off
+        nb in CI && (j += 1; nbs[j] = nb)
+    end
+    grid.LI[nbs[rand(1:j)]]
+end
 
 ################### abstract spatial rates struct ###############
 
@@ -142,7 +200,7 @@ end
 """
 initializes SpatialRates with zero rates
 """
-function SpatialRates(numrxjumps::Integer,num_species::Integer,num_sites::Integer)
+function SpatialRates(numrxjumps::Int,num_species::Int,num_sites::Int)
     reaction_rates = zeros(Float64, numrxjumps, num_sites)
     hopping_rates = zeros(Float64, num_species, num_sites)
     SpatialRates(reaction_rates,hopping_rates)
@@ -151,7 +209,7 @@ end
 """
 initializes SpatialRates with zero rates
 """
-function SpatialRates(ma_jumps, num_species, spatial_system::AbstractSpatialSystem)
+function SpatialRates(ma_jumps, num_species, spatial_system)
     num_sites = num_sites(spatial_system)
     num_jumps = get_num_majumps(ma_jumps)
     SpatialRates(num_jumps,num_species,num_sites)

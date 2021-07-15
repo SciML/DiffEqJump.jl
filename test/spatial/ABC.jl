@@ -10,18 +10,18 @@ function ABC_setup(spatial_system, starting_site, u0, diffusivity, end_time)
     netstoch = [[1 => -1, 2 => -1, 3 => 1],[1 => 1, 2 => 1, 3 => -1]]
     rates = [0.1/mesh_size, 1.]
     majumps = MassActionJump(rates, reactstoch, netstoch)
-    
+
     # spatial system setup
     hopping_rate = diffusivity * (linear_size/domain_size)^2
     num_nodes = DiffEqJump.num_sites(spatial_system)
-    
+
     # Starting state setup
     starting_state = zeros(Int, length(u0), num_nodes)
     starting_state[:,starting_site] = copy(u0)
     prob = DiscreteProblem(starting_state,(0.0,end_time), rates)
-    
+
     hopping_constants = [hopping_rate for i in starting_state]
-    
+
     alg = NSM()
     return JumpProblem(prob, alg, majumps, hopping_constants=hopping_constants, spatial_system = spatial_system, save_positions=(false,false))
 end
@@ -47,7 +47,7 @@ end_time = 10.0
 diffusivity = 1.0
 
 # testing on CartesianGrid
-grid = CartesianGrid(dim, linear_size)
+grid = DiffEqJump.CartesianGrid1(dim, linear_size)
 spatial_jump_prob = ABC_setup(grid, starting_site, u0, diffusivity, end_time)
 solution = solve(spatial_jump_prob, SSAStepper())
 mean_end_state = get_mean_end_state(spatial_jump_prob, Nsims)
